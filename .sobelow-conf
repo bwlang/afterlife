@@ -1,0 +1,23 @@
+[
+  # Exit non-zero on any finding, so sobelow gates precommit/ci.
+  exit: "low",
+  format: "txt",
+  ignore_files: [],
+  # Config.CSRFRoute flags /api/check_in/:token being reachable via both
+  # GET and POST on the same action. That's the right general heuristic,
+  # but doesn't apply here: this endpoint is authenticated by a
+  # capability-style bearer token in the URL itself
+  # (Switches.regenerate_api_token/1), not by session cookie, so there's
+  # no ambient browser auth for a forged cross-site request to ride on.
+  # See the comment in lib/afterlife_web/router.ex.
+  ignore: ["Config.CSRFRoute"],
+  out: nil,
+  private: false,
+  router: nil,
+  # Honor inline `# sobelow_skip [...]` comments (see e.g.
+  # lib/afterlife_web/live/message_live/new.ex).
+  skip: true,
+  threshold: :low,
+  verbose: false,
+  version: false
+]

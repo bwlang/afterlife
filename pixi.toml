@@ -1,0 +1,27 @@
+[workspace]
+authors = ["Brad Langhorst <langhorst@neb.com>"]
+channels = ["conda-forge", "bioconda"]
+name = "afterlife"
+platforms = ["osx-arm64", "linux-64"]
+version = "0.1.0"
+
+[tasks]
+setup = "mix local.hex --force && mix local.rebar --force && git config core.hooksPath .githooks"
+deps = "mix deps.get"
+server = "mix phx.server"
+test = "mix test"
+format = "mix format"
+"db.create" = "mix ecto.create"
+"db.migrate" = "mix ecto.migrate"
+"db.reset" = "mix ecto.reset"
+credo = "mix credo --strict"
+sobelow = "mix sobelow --config"
+dialyzer = "mix dialyzer"
+audit = "mix deps.audit"
+coverage = "mix coveralls.html"
+precommit = "mix precommit"
+ci = "mix ci"
+
+[dependencies]
+elixir = ">=1.20,<2"
+erlang = ">=29,<30"

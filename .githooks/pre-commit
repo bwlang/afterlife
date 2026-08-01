@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs `mix precommit` (compile --warnings-as-errors, format, credo,
+# deps.audit, dialyzer, test) before allowing a commit. Installed via
+# `git config core.hooksPath .githooks` (done automatically by
+# `pixi run setup`).
+set -euo pipefail
+
+echo "Running mix precommit..."
+pixi run mix precommit
