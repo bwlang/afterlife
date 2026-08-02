@@ -47,6 +47,22 @@ defmodule Afterlife.Health do
 
   def stale_after_seconds, do: @stale_after_seconds
 
+  @doc """
+  The commit this build came from, baked in as `GIT_SHA` by the
+  Containerfile. `"unknown"` when nothing passed it — a local
+  `mix phx.server`, or a hand-run `podman build`.
+
+  Reported next to the sweep age so a deploy can be confirmed rather
+  than assumed: the git checkout and the image actually running are two
+  different things, and they drift quietly.
+  """
+  def version do
+    case System.get_env("GIT_SHA") do
+      sha when is_binary(sha) and sha != "" -> String.slice(sha, 0, 8)
+      _ -> "unknown"
+    end
+  end
+
   defp last_sweep_at do
     Repo.one(
       from j in Oban.Job,

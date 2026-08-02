@@ -127,6 +127,12 @@ RUN mkdir -p /data && chown nobody:root /data
 ENV MIX_ENV="prod"
 ENV DATABASE_PATH="/data/afterlife.db"
 
+# Which commit this image was built from, surfaced at GET /health.
+# Without it there is no way to tell whether a deploy actually landed —
+# the checkout and the running image can disagree silently.
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/afterlife ./
 

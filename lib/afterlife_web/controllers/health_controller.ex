@@ -17,7 +17,7 @@ defmodule AfterlifeWeb.HealthController do
   def show(conn, _params) do
     case Health.sweep_status() do
       {:ok, age} ->
-        text(conn, "ok: sweep completed #{age}s ago")
+        text(conn, "ok: sweep completed #{age}s ago (build #{Health.version()})")
 
       {:error, :never_run} ->
         unhealthy(conn, "no sweep has completed yet")
@@ -33,6 +33,6 @@ defmodule AfterlifeWeb.HealthController do
   defp unhealthy(conn, reason) do
     conn
     |> put_status(:service_unavailable)
-    |> text("UNHEALTHY: #{reason}")
+    |> text("UNHEALTHY: #{reason} (build #{Health.version()})")
   end
 end
