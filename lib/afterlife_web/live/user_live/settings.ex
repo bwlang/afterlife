@@ -1,8 +1,6 @@
 defmodule AfterlifeWeb.UserLive.Settings do
   use AfterlifeWeb, :live_view
 
-  on_mount {AfterlifeWeb.UserAuth, :require_sudo_mode}
-
   alias Afterlife.Accounts
 
   @impl true
@@ -114,21 +112,24 @@ defmodule AfterlifeWeb.UserLive.Settings do
   def handle_event("update_email", params, socket) do
     %{"user" => user_params} = params
     user = socket.assigns.current_scope.user
-    true = Accounts.sudo_mode?(user)
 
-    case Accounts.change_user_email(user, user_params) do
-      %{valid?: true} = changeset ->
-        Accounts.deliver_user_update_email_instructions(
-          Ecto.Changeset.apply_action!(changeset, :insert),
-          user.email,
-          &url(~p"/users/settings/confirm-email/#{&1}")
-        )
+    if Accounts.sudo_mode?(user) do
+      case Accounts.change_user_email(user, user_params) do
+        %{valid?: true} = changeset ->
+          Accounts.deliver_user_update_email_instructions(
+            Ecto.Changeset.apply_action!(changeset, :insert),
+            user.email,
+            &url(~p"/users/settings/confirm-email/#{&1}")
+          )
 
-        info = "A link to confirm your email change has been sent to the new address."
-        {:noreply, socket |> put_flash(:info, info)}
+          info = "A link to confirm your email change has been sent to the new address."
+          {:noreply, socket |> put_flash(:info, info)}
 
-      changeset ->
-        {:noreply, assign(socket, :email_form, to_form(changeset, action: :insert))}
+        changeset ->
+          {:noreply, assign(socket, :email_form, to_form(changeset, action: :insert))}
+      end
+    else
+      {:noreply, reauthenticate(socket)}
     end
   end
 
@@ -147,14 +148,28 @@ defmodule AfterlifeWeb.UserLive.Settings do
   def handle_event("update_password", params, socket) do
     %{"user" => user_params} = params
     user = socket.assigns.current_scope.user
-    true = Accounts.sudo_mode?(user)
 
-    case Accounts.change_user_password(user, user_params) do
-      %{valid?: true} = changeset ->
-        {:noreply, assign(socket, trigger_submit: true, password_form: to_form(changeset))}
+    if Accounts.sudo_mode?(user) do
+      case Accounts.change_user_password(user, user_params) do
+        %{valid?: true} = changeset ->
+          {:noreply, assign(socket, trigger_submit: true, password_form: to_form(changeset))}
 
-      changeset ->
-        {:noreply, assign(socket, password_form: to_form(changeset, action: :insert))}
+        changeset ->
+          {:noreply, assign(socket, password_form: to_form(changeset, action: :insert))}
+      end
+    else
+      {:noreply, reauthenticate(socket)}
     end
+  end
+
+  # Reading this page needs nothing more than a session, but changing
+  # the email or the password still needs a recent login: those are the
+  # account-takeover paths, and a month-long session shouldn't be enough
+  # on its own. Without the sudo-mode gate on mount, that check has to
+  # fail gracefully here rather than crash on a failed match.
+  defp reauthenticate(socket) do
+    socket
+    |> put_flash(:error, "Please log in again to change your email or password.")
+    |> push_navigate(to: ~p"/users/log-in")
   end
 end

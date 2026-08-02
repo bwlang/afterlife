@@ -24,16 +24,50 @@ defmodule AfterlifeWeb.UserLive.SettingsTest do
       assert %{"error" => "You must log in to access this page."} = flash
     end
 
-    test "redirects if user is not in sudo mode", %{conn: conn} do
-      {:ok, conn} =
+    test "can be viewed without a recent login", %{conn: conn} do
+      {:ok, _lv, html} =
         conn
-        |> log_in_user(user_fixture(),
-          token_authenticated_at: DateTime.add(DateTime.utc_now(:second), -11, :minute)
-        )
+        |> stale_login()
         |> live(~p"/users/settings")
+
+      assert html =~ "Account Settings"
+    end
+
+    # Reading is free; taking over the account is not. These are the two
+    # paths that would let a stolen month-long session become permanent.
+    test "still requires a recent login to change the email", %{conn: conn} do
+      {:ok, lv, _html} = live(stale_login(conn), ~p"/users/settings")
+
+      {:ok, _lv, html} =
+        lv
+        |> form("#email_form", %{"user" => %{"email" => "attacker@example.com"}})
+        |> render_submit()
         |> follow_redirect(conn, ~p"/users/log-in")
 
-      assert conn.resp_body =~ "You must re-authenticate to access this page."
+      assert html =~ "Please log in again"
+    end
+
+    test "still requires a recent login to change the password", %{conn: conn} do
+      {:ok, lv, _html} = live(stale_login(conn), ~p"/users/settings")
+
+      {:ok, _lv, html} =
+        lv
+        |> form("#password_form", %{
+          "user" => %{
+            "password" => "a-brand-new-password",
+            "password_confirmation" => "a-brand-new-password"
+          }
+        })
+        |> render_submit()
+        |> follow_redirect(conn, ~p"/users/log-in")
+
+      assert html =~ "Please log in again"
+    end
+
+    defp stale_login(conn) do
+      log_in_user(conn, user_fixture(),
+        token_authenticated_at: DateTime.add(DateTime.utc_now(:second), -60, :minute)
+      )
     end
   end
 
