@@ -10,9 +10,6 @@ defmodule Afterlife.Accounts.UserToken do
   # since someone with access to the email may take over the account.
   @magic_link_validity_in_minutes 15
   @change_email_validity_in_days 7
-  # A month, not the generated fortnight: this is a low-traffic personal
-  # app that people go weeks without opening, and being logged out is a
-  # reason not to check in.
   @session_validity_in_days 30
 
   schema "users_tokens" do

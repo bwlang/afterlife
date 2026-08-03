@@ -2,7 +2,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
   use AfterlifeWeb, :live_view
 
   alias Afterlife.Switches
-  alias Afterlife.Switches.Switch
+  alias Afterlife.Switches.{Recipient, Switch}
 
   @impl true
   def render(assigns) do
@@ -59,6 +59,40 @@ defmodule AfterlifeWeb.SwitchLive.Show do
         <strong>Copy this now — it won't be shown again:</strong><br /> {@api_check_in_url}
       </div>
 
+      <div class="divider">Recipients</div>
+
+      <p class="text-sm text-base-content/70">
+        The people your messages can be addressed to. A birthday is only needed if you
+        want to hold a message until they reach a certain age.
+      </p>
+
+      <.form for={@recipient_form} id="recipient-form" phx-submit="add_recipient" class="mt-2">
+        <div class="flex flex-wrap gap-2 items-end">
+          <.input field={@recipient_form[:name]} type="text" label="Name" />
+          <.input field={@recipient_form[:email]} type="email" label="Email" />
+          <.input field={@recipient_form[:birthdate]} type="date" label="Birthday (optional)" />
+          <.button variant="primary" phx-disable-with="Adding...">Add</.button>
+        </div>
+      </.form>
+
+      <.table :if={@recipients != []} id="recipients" rows={@recipients}>
+        <:col :let={recipient} label="Name">{recipient.name}</:col>
+        <:col :let={recipient} label="Email">{recipient.email}</:col>
+        <:col :let={recipient} label="Birthday">
+          {if recipient.birthdate, do: Calendar.strftime(recipient.birthdate, "%Y-%m-%d"), else: "—"}
+        </:col>
+        <:col :let={recipient} label="">
+          <.link
+            phx-click="delete_recipient"
+            phx-value-id={recipient.id}
+            data-confirm="Remove this person? Messages addressed only to them will have no recipients."
+            class="link text-error text-sm"
+          >
+            Remove
+          </.link>
+        </:col>
+      </.table>
+
       <div class="divider">Messages</div>
 
       <.link navigate={~p"/switches/#{@switch}/messages/new"} class="btn btn-primary btn-sm">
@@ -68,6 +102,11 @@ defmodule AfterlifeWeb.SwitchLive.Show do
       <.list :if={@messages != []}>
         <:item :for={message <- @messages} title={message.subject}>
           To: {Enum.map_join(message.recipients, ", ", & &1.email)}
+          <div :if={held?(message)} class="text-xs text-base-content/70 mt-1">
+            <div :for={{recipient, due} <- message.schedule}>
+              {recipient.name}: {due_description(due)}
+            </div>
+          </div>
           <span :if={message.attachments != []}>· {length(message.attachments)} attachment(s)</span>
         </:item>
       </.list>
@@ -99,10 +138,38 @@ defmodule AfterlifeWeb.SwitchLive.Show do
      # Messages are only ever added from another page, so they're loaded
      # once here rather than on every check-in/pause/settings change.
      |> assign(:messages, Switches.list_messages(switch))
+     |> assign_recipients(switch)
      |> assign_switch(switch)}
   end
 
   @impl true
+  def handle_event("add_recipient", %{"recipient" => params}, socket) do
+    case Switches.add_recipient(socket.assigns.switch, params) do
+      {:ok, _recipient} ->
+        {:noreply,
+         socket
+         |> assign_recipients(socket.assigns.switch)
+         |> put_flash(:info, "Recipient added.")}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, recipient_form: to_form(changeset))}
+    end
+  end
+
+  def handle_event("delete_recipient", %{"id" => id}, socket) do
+    switch = socket.assigns.switch
+
+    switch
+    |> Switches.get_recipient!(id)
+    |> Switches.delete_recipient()
+
+    {:noreply,
+     socket
+     |> assign_recipients(switch)
+     |> assign(:messages, Switches.list_messages(switch))
+     |> put_flash(:info, "Recipient removed.")}
+  end
+
   def handle_event("check_in", _params, socket) do
     {:ok, switch} = Switches.manual_check_in(socket.assigns.switch)
     {:noreply, socket |> assign_switch(switch) |> put_flash(:info, "Checked in.")}
@@ -150,11 +217,26 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
   # Everything that changes when the switch itself does: the audit log
   # gains a row, and the settings form re-renders from the saved values.
+  defp assign_recipients(socket, switch) do
+    socket
+    |> assign(:recipients, Switches.list_recipients(switch))
+    |> assign(:recipient_form, to_form(Switches.change_recipient(%Recipient{})))
+  end
+
   defp assign_switch(socket, switch) do
     socket
     |> assign(:switch, switch)
     |> assign(:events, Switches.list_check_in_events(switch))
     |> assign(:settings_form, to_form(Switches.change_switch(switch)))
+  end
+
+  defp held?(message), do: Enum.any?(message.schedule, fn {_recipient, due} -> due end)
+
+  defp due_description(nil), do: "as soon as the switch triggers"
+
+  defp due_description(due) do
+    years = div(DateTime.diff(due, DateTime.utc_now(), :day), 365)
+    "#{Calendar.strftime(due, "%-d %B %Y")} (about #{years} years away)"
   end
 
   defp status_class("active"), do: "badge badge-success"

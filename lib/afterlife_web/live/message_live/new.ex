@@ -2,7 +2,7 @@ defmodule AfterlifeWeb.MessageLive.New do
   use AfterlifeWeb, :live_view
 
   alias Afterlife.Switches
-  alias Afterlife.Switches.{Message, Recipient}
+  alias Afterlife.Switches.Message
 
   @impl true
   def render(assigns) do
@@ -16,13 +16,71 @@ defmodule AfterlifeWeb.MessageLive.New do
         <.input field={@form[:subject]} type="text" label="Subject" />
         <.input field={@form[:body]} type="textarea" label="Body" />
 
+        <div>
+          <label class="label mb-1">Recipients</label>
+          <p :if={@recipients == []} class="text-sm text-base-content/70">
+            No recipients on this switch yet — add them on the
+            <.link navigate={~p"/switches/#{@switch}"} class="link">switch page</.link>
+            first.
+          </p>
+          <label :for={recipient <- @recipients} class="flex items-center gap-2 py-1">
+            <input
+              type="checkbox"
+              name="recipient_ids[]"
+              value={recipient.id}
+              checked={recipient.id in @selected_ids}
+              class="checkbox checkbox-sm"
+            />
+            <span>{recipient.name} &lt;{recipient.email}&gt;</span>
+            <span :if={recipient.birthdate} class="text-xs text-base-content/60">
+              born {Calendar.strftime(recipient.birthdate, "%Y-%m-%d")}
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <label class="label mb-1">When to send</label>
+          <select name="schedule[mode]" class="select select-bordered w-full">
+            <option value="trigger" selected={@schedule.mode == "trigger"}>
+              As soon as the switch triggers
+            </option>
+            <option value="date" selected={@schedule.mode == "date"}>
+              On a specific date
+            </option>
+            <option value="age" selected={@schedule.mode == "age"}>
+              When each recipient reaches an age
+            </option>
+          </select>
+        </div>
+
         <.input
-          type="textarea"
-          name="recipients"
-          id="recipients"
-          label="Recipients — one per line: Name <email> or just email"
-          value={@recipients_text}
+          :if={@schedule.mode == "date"}
+          type="date"
+          name="schedule[date]"
+          id="schedule_date"
+          label="Send on"
+          value={@schedule.date}
         />
+
+        <.input
+          :if={@schedule.mode == "age"}
+          type="number"
+          name="schedule[age]"
+          id="schedule_age"
+          label="Age"
+          value={@schedule.age}
+        />
+
+        <div :if={@horizons != []} class="text-sm rounded bg-base-200 p-2 space-y-1">
+          <p class="font-semibold">When each copy would arrive</p>
+          <p :for={{name, description} <- @horizons}>
+            {name}: {description}
+          </p>
+          <p class="text-warning">
+            A held message needs this app — host, domain, mail credentials and encryption
+            key — to still be running on that date, with nobody left to fix it.
+          </p>
+        </div>
 
         <div>
           <label class="label mb-1">Attachments</label>
@@ -55,7 +113,10 @@ defmodule AfterlifeWeb.MessageLive.New do
      socket
      |> assign(:switch, switch)
      |> assign(:form, to_form(Switches.change_message(%Message{})))
-     |> assign(:recipients_text, "")
+     |> assign(:recipients, Switches.list_recipients(switch))
+     |> assign(:selected_ids, [])
+     |> assign(:schedule, %{mode: "trigger", date: nil, age: nil})
+     |> assign(:horizons, [])
      |> allow_upload(:attachments, accept: :any, max_entries: 5, max_file_size: 25_000_000)}
   end
 
@@ -67,9 +128,13 @@ defmodule AfterlifeWeb.MessageLive.New do
       |> Map.put(:action, :validate)
       |> to_form()
 
-    recipients_text = params["recipients"] || socket.assigns.recipients_text
+    selected = selected_ids(params)
+    schedule = schedule_from(params)
 
-    {:noreply, assign(socket, form: form, recipients_text: recipients_text)}
+    {:noreply,
+     socket
+     |> assign(form: form, selected_ids: selected, schedule: schedule)
+     |> assign(:horizons, horizons(socket.assigns.recipients, selected, schedule))}
   end
 
   def handle_event("cancel_upload", %{"ref" => ref}, socket) do
@@ -77,19 +142,90 @@ defmodule AfterlifeWeb.MessageLive.New do
   end
 
   def handle_event("save", params, socket) do
-    recipients = Switches.parse_recipients(params["recipients"] || "")
+    case selected_ids(params) do
+      [] ->
+        {:noreply, put_flash(socket, :error, "Choose at least one recipient.")}
 
-    if recipients == [] do
-      {:noreply, put_flash(socket, :error, "Add at least one recipient.")}
-    else
-      save_message(socket, params["message"] || %{}, recipients)
+      ids ->
+        schedules = schedules_for(socket.assigns.recipients, ids, schedule_from(params))
+        save_message(socket, params["message"] || %{}, schedules)
     end
   end
 
-  defp save_message(socket, message_params, recipients) do
+  defp schedule_from(params) do
+    schedule = params["schedule"] || %{}
+
+    %{
+      mode: schedule["mode"] || "trigger",
+      date: schedule["date"],
+      age: schedule["age"]
+    }
+  end
+
+  # Ages and birthdays end here. Everything below the context deals in
+  # dates, so the translation happens once, at the point the message is
+  # written, and is visible on screen before it is saved.
+  defp schedules_for(recipients, selected_ids, schedule) do
+    recipients
+    |> Enum.filter(&(&1.id in selected_ids))
+    |> Enum.map(&%{recipient_id: &1.id, deliver_on: deliver_on_for(&1, schedule)})
+  end
+
+  defp deliver_on_for(_recipient, %{mode: "date", date: date}) when date not in [nil, ""] do
+    case Date.from_iso8601(date) do
+      {:ok, parsed} -> parsed
+      {:error, _} -> nil
+    end
+  end
+
+  defp deliver_on_for(%{birthdate: %Date{} = birthdate}, %{mode: "age", age: age})
+       when age not in [nil, ""] do
+    case Integer.parse(age) do
+      {years, ""} when years > 0 -> Switches.birthday_at_age(birthdate, years)
+      _ -> nil
+    end
+  end
+
+  defp deliver_on_for(_recipient, _schedule), do: nil
+
+  # An age hides how long the wait is: age 18 is five years for a
+  # thirteen-year-old and eighteen for a newborn. Resolved here so the
+  # real date is on screen before the message is saved. Measured from
+  # today, so it over-states — the wait really starts at trigger, later.
+  defp horizons(_recipients, _selected, %{mode: "trigger"}), do: []
+
+  defp horizons(recipients, selected, schedule) do
+    recipients
+    |> Enum.filter(&(&1.id in selected))
+    |> Enum.map(&{&1.name, horizon(&1, schedule)})
+  end
+
+  defp horizon(recipient, schedule) do
+    now = DateTime.utc_now()
+
+    case Switches.deliver_after(deliver_on_for(recipient, schedule), now) do
+      nil when schedule.mode == "age" and is_nil(recipient.birthdate) ->
+        "no birthday recorded, so this copy goes as soon as the switch triggers"
+
+      nil ->
+        "as soon as the switch triggers"
+
+      due ->
+        years = div(DateTime.diff(due, now, :day), 365)
+        "#{Calendar.strftime(due, "%-d %B %Y")} — about #{years} years from now"
+    end
+  end
+
+  defp selected_ids(params) do
+    params
+    |> Map.get("recipient_ids", [])
+    |> Enum.map(&String.to_integer/1)
+  end
+
+  defp save_message(socket, message_params, recipient_ids) do
     switch = socket.assigns.switch
 
-    case Switches.create_message(switch, message_params, recipients) do
+    case Switches.create_message(switch, message_params, recipient_ids) do
       {:ok, message} ->
         consume_attachments(socket, message)
 
@@ -98,22 +234,9 @@ defmodule AfterlifeWeb.MessageLive.New do
          |> put_flash(:info, "Message saved.")
          |> push_navigate(to: ~p"/switches/#{switch}")}
 
-      # The recipients live in a free-text box, not a form field, so
-      # their errors have nowhere to render inline — surface them as a
-      # flash rather than dropping the address on the floor.
-      {:error, %Ecto.Changeset{data: %Recipient{}} = changeset} ->
-        {:noreply,
-         put_flash(socket, :error, "Check the recipients: #{errors_sentence(changeset)}")}
-
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset))}
     end
-  end
-
-  defp errors_sentence(changeset) do
-    changeset
-    |> Ecto.Changeset.traverse_errors(&translate_error/1)
-    |> Enum.map_join("; ", fn {field, messages} -> "#{field} #{Enum.join(messages, ", ")}" end)
   end
 
   # sobelow_skip ["Traversal.FileModule"]

@@ -41,8 +41,13 @@ defmodule Afterlife.Switches.NotifierTest do
   describe "deliver_final_message/2" do
     test "sends the message body and attachments to the recipient" do
       switch = switch_fixture()
-      message = message_fixture(switch, %{subject: "For you", body: "I love you all."})
-      recipient = recipient_fixture(message, %{name: "Jamie", email: "jamie@example.com"})
+
+      {message, recipient} =
+        message_with_recipient(
+          switch,
+          %{subject: "For you", body: "I love you all."},
+          %{name: "Jamie", email: "jamie@example.com"}
+        )
 
       {:ok, _attachment} =
         Switches.add_attachment(message, %{

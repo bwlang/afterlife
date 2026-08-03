@@ -7,13 +7,13 @@ defmodule AfterlifeWeb.UserLive.SettingsTest do
 
   describe "Settings page" do
     test "renders settings page", %{conn: conn} do
-      {:ok, _lv, html} =
+      {:ok, lv, _html} =
         conn
         |> log_in_user(user_fixture())
         |> live(~p"/users/settings")
 
-      assert html =~ "Change Email"
-      assert html =~ "Save Password"
+      assert has_element?(lv, "#email_form button", "Change Email")
+      assert has_element?(lv, "#password_form button", "Save Password")
     end
 
     test "redirects if user is not logged in", %{conn: conn} do
@@ -25,12 +25,12 @@ defmodule AfterlifeWeb.UserLive.SettingsTest do
     end
 
     test "can be viewed without a recent login", %{conn: conn} do
-      {:ok, _lv, html} =
+      {:ok, lv, _html} =
         conn
         |> stale_login()
         |> live(~p"/users/settings")
 
-      assert html =~ "Account Settings"
+      assert has_element?(lv, "h1", "Account Settings")
     end
 
     # Reading is free; taking over the account is not. These are the two
@@ -38,19 +38,19 @@ defmodule AfterlifeWeb.UserLive.SettingsTest do
     test "still requires a recent login to change the email", %{conn: conn} do
       {:ok, lv, _html} = live(stale_login(conn), ~p"/users/settings")
 
-      {:ok, _lv, html} =
+      {:ok, login_lv, _html} =
         lv
         |> form("#email_form", %{"user" => %{"email" => "attacker@example.com"}})
         |> render_submit()
         |> follow_redirect(conn, ~p"/users/log-in")
 
-      assert html =~ "Please log in again"
+      assert has_element?(login_lv, "#flash-error", "Please log in again")
     end
 
     test "still requires a recent login to change the password", %{conn: conn} do
       {:ok, lv, _html} = live(stale_login(conn), ~p"/users/settings")
 
-      {:ok, _lv, html} =
+      {:ok, login_lv, _html} =
         lv
         |> form("#password_form", %{
           "user" => %{
@@ -61,7 +61,7 @@ defmodule AfterlifeWeb.UserLive.SettingsTest do
         |> render_submit()
         |> follow_redirect(conn, ~p"/users/log-in")
 
-      assert html =~ "Please log in again"
+      assert has_element?(login_lv, "#flash-error", "Please log in again")
     end
 
     defp stale_login(conn) do

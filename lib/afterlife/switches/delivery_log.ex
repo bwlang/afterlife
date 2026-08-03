@@ -8,6 +8,9 @@ defmodule Afterlife.Switches.DeliveryLog do
     field :channel, :string, default: "email"
     field :status, :string, default: "pending"
     field :sent_at, :utc_datetime
+    # When this becomes due; nil means immediately. This is the durable
+    # schedule — an age-based delivery can be decades out.
+    field :deliver_after, :utc_datetime
     field :error, :string
 
     belongs_to :message, Afterlife.Switches.Message
@@ -20,7 +23,15 @@ defmodule Afterlife.Switches.DeliveryLog do
 
   def changeset(log, attrs) do
     log
-    |> cast(attrs, [:channel, :status, :sent_at, :error, :message_id, :recipient_id])
+    |> cast(attrs, [
+      :channel,
+      :status,
+      :sent_at,
+      :error,
+      :deliver_after,
+      :message_id,
+      :recipient_id
+    ])
     |> validate_required([:message_id, :recipient_id])
     |> validate_inclusion(:status, @statuses)
     |> foreign_key_constraint(:message_id)

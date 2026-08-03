@@ -65,8 +65,7 @@ defmodule Afterlife.Switches.SweepWorkerTest do
         |> then(&(Ecto.Changeset.change(&1, status: "grace") |> Repo.update!()))
         |> backdate!(1)
 
-      message = message_fixture(switch)
-      recipient = recipient_fixture(message)
+      {message, recipient} = message_with_recipient(switch)
 
       assert :ok = SweepWorker.perform(%Oban.Job{})
 

@@ -87,13 +87,25 @@ defmodule AfterlifeWeb.SwitchLive.ShowTest do
     end
 
     test "lists messages and their recipients", %{conn: conn, switch: switch} do
-      message = message_fixture(switch, %{subject: "For you, whenever"})
-      recipient = recipient_fixture(message, %{email: "jamie@example.com"})
+      {message, recipient} =
+        message_with_recipient(switch, %{subject: "For you, whenever"}, %{
+          email: "jamie@example.com"
+        })
+
+      _ = message
 
       {:ok, _lv, html} = live(conn, ~p"/switches/#{switch}")
 
       assert html =~ "For you, whenever"
       assert html =~ recipient.email
+    end
+
+    test "shows the date a held message would actually be sent", %{conn: conn, switch: switch} do
+      message_with_recipient(switch, %{deliver_on: ~D[2043-03-14]}, %{name: "Robin"})
+
+      {:ok, _lv, html} = live(conn, ~p"/switches/#{switch}")
+
+      assert html =~ "Robin: 14 March 2043"
     end
 
     test "links to the new-message page", %{conn: conn, switch: switch} do

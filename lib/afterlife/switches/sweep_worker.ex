@@ -1,8 +1,8 @@
 defmodule Afterlife.Switches.SweepWorker do
   @moduledoc """
   The dead-man's-switch engine, run on a cron schedule (config/config.exs).
-  Each run sends due reminders and advances any switch whose deadline has
-  passed.
+  Each run sends due reminders, advances any switch whose deadline has
+  passed, and releases deliveries that were held for a future date.
 
   Whether this job is still running at all is watched from outside, by
   an external monitor polling `GET /health` (docs/DESIGN.md §0) — that
@@ -24,6 +24,7 @@ defmodule Afterlife.Switches.SweepWorker do
 
     send_reminders(now)
     advance_states(now)
+    Switches.enqueue_due_deliveries(now)
 
     :ok
   end

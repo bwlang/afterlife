@@ -15,6 +15,13 @@ defmodule AfterlifeWeb.MessageLive.NewTest do
   end
 
   describe "new message" do
+    # The date and age inputs only render once that mode is chosen, so
+    # tests take the same two steps a person does.
+    defp choose_mode(lv, mode) do
+      lv |> form("#message-form", %{"schedule" => %{"mode" => mode}}) |> render_change()
+      lv
+    end
+
     setup %{conn: conn} do
       user = user_fixture()
       switch = switch_fixture(%{user: user})
@@ -29,17 +36,18 @@ defmodule AfterlifeWeb.MessageLive.NewTest do
       end
     end
 
-    test "creates a message with recipients, parsing name <email> and bare emails", %{
-      conn: conn,
-      switch: switch
-    } do
+    test "addresses a message to the recipients picked", %{conn: conn, switch: switch} do
+      jamie = recipient_fixture(switch, %{name: "Jamie", email: "jamie@example.com"})
+      alex = recipient_fixture(switch, %{name: "Alex", email: "alex@example.com"})
+      _unpicked = recipient_fixture(switch, %{name: "Sam", email: "sam@example.com"})
+
       {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
 
       {:ok, _lv, html} =
         lv
         |> form("#message-form", %{
           "message" => %{"subject" => "For you", "body" => "I love you all."},
-          "recipients" => "Jamie <jamie@example.com>\nalex@example.com"
+          "recipient_ids" => [to_string(jamie.id), to_string(alex.id)]
         })
         |> render_submit()
         |> follow_redirect(conn, ~p"/switches/#{switch}")
@@ -47,78 +55,133 @@ defmodule AfterlifeWeb.MessageLive.NewTest do
       assert html =~ "Message saved."
 
       assert [message] = Switches.list_messages(switch)
-      assert message.subject == "For you"
-
       emails = message.recipients |> Enum.map(& &1.email) |> Enum.sort()
       assert emails == ["alex@example.com", "jamie@example.com"]
-      assert Enum.find(message.recipients, &(&1.email == "jamie@example.com")).name == "Jamie"
     end
 
     test "refuses to save without at least one recipient", %{conn: conn, switch: switch} do
+      recipient_fixture(switch)
       {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
 
       html =
         lv
         |> form("#message-form", %{
-          "message" => %{"subject" => "For you", "body" => "I love you all."},
-          "recipients" => ""
+          "message" => %{"subject" => "For you", "body" => "I love you all."}
         })
         |> render_submit()
 
-      assert html =~ "Add at least one recipient."
+      assert html =~ "Choose at least one recipient."
       assert Switches.list_messages(switch) == []
     end
 
+    # The age is resolved to a date here, in the UI; nothing below the
+    # context ever sees an age or a birthday.
+    test "an age is stored as the date that recipient reaches it", %{conn: conn, switch: switch} do
+      jamie = recipient_fixture(switch, %{birthdate: ~D[2020-03-14]})
+      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+
+      lv
+      |> choose_mode("age")
+      |> form("#message-form", %{
+        "message" => %{"subject" => "18th", "body" => "Happy birthday."},
+        "schedule" => %{"mode" => "age", "age" => "18"},
+        "recipient_ids" => [to_string(jamie.id)]
+      })
+      |> render_submit()
+
+      assert [message] = Switches.list_messages(switch)
+      assert [{recipient, due}] = message.schedule
+      assert recipient.id == jamie.id
+      assert due == ~U[2038-03-14 09:00:00Z]
+    end
+
+    test "a fixed date applies to everyone on the message", %{conn: conn, switch: switch} do
+      a = recipient_fixture(switch, %{name: "A"})
+      b = recipient_fixture(switch, %{name: "B", birthdate: ~D[2020-03-14]})
+
+      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+
+      lv
+      |> choose_mode("date")
+      |> form("#message-form", %{
+        "message" => %{"subject" => "s", "body" => "b"},
+        "schedule" => %{"mode" => "date", "date" => "2030-01-01"},
+        "recipient_ids" => [to_string(a.id), to_string(b.id)]
+      })
+      |> render_submit()
+
+      assert [message] = Switches.list_messages(switch)
+      dues = message.schedule |> Enum.map(fn {_r, due} -> due end) |> Enum.uniq()
+      assert dues == [~U[2030-01-01 09:00:00Z]]
+    end
+
+    # The age field hides the wait: the same age is five years for one
+    # recipient and eighteen for another, and that difference decides
+    # whether the message is plausible or a wish.
+    test "shows how far off each held copy would land", %{conn: conn, switch: switch} do
+      baby = recipient_fixture(switch, %{name: "Robin", birthdate: ~D[2025-03-14]})
+      teen = recipient_fixture(switch, %{name: "Jamie", birthdate: ~D[2013-03-14]})
+
+      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+
+      html =
+        lv
+        |> choose_mode("age")
+        |> form("#message-form", %{
+          "message" => %{"subject" => "s", "body" => "b"},
+          "schedule" => %{"mode" => "age", "age" => "18"},
+          "recipient_ids" => [to_string(baby.id), to_string(teen.id)]
+        })
+        |> render_change()
+
+      assert html =~ "Robin: 14 March 2043"
+      assert html =~ "Jamie: 14 March 2031"
+    end
+
+    test "says so when a held copy would go out immediately anyway", %{
+      conn: conn,
+      switch: switch
+    } do
+      grown = recipient_fixture(switch, %{name: "Alex", birthdate: ~D[1980-03-14]})
+      unknown = recipient_fixture(switch, %{name: "Sam"})
+
+      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+
+      html =
+        lv
+        |> choose_mode("age")
+        |> form("#message-form", %{
+          "message" => %{"subject" => "s", "body" => "b"},
+          "schedule" => %{"mode" => "age", "age" => "18"},
+          "recipient_ids" => [to_string(grown.id), to_string(unknown.id)]
+        })
+        |> render_change()
+
+      assert html =~ "Alex: as soon as the switch triggers"
+      assert html =~ "Sam: no birthday recorded"
+    end
+
     test "attaches an uploaded file to the message", %{conn: conn, switch: switch} do
+      jamie = recipient_fixture(switch)
       {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
 
       attachment =
         file_input(lv, "#message-form", :attachments, [
-          %{
-            name: "note.txt",
-            content: "a little note for later",
-            type: "text/plain"
-          }
+          %{name: "note.txt", content: "a little note for later", type: "text/plain"}
         ])
 
       assert render_upload(attachment, "note.txt") =~ "note.txt"
 
-      {:ok, _lv, _html} =
-        lv
-        |> form("#message-form", %{
-          "message" => %{"subject" => "For you", "body" => "I love you all."},
-          "recipients" => "jamie@example.com"
-        })
-        |> render_submit()
-        |> follow_redirect(conn, ~p"/switches/#{switch}")
+      lv
+      |> form("#message-form", %{
+        "message" => %{"subject" => "For you", "body" => "I love you all."},
+        "recipient_ids" => [to_string(jamie.id)]
+      })
+      |> render_submit()
 
       assert [message] = Switches.list_messages(switch)
       assert [attachment] = message.attachments
       assert attachment.filename == "note.txt"
-
-      # Contents are loaded only on the delivery path — the dashboard
-      # listing deliberately carries metadata alone.
-      assert [recipient] = message.recipients
-      {message, _recipient} = Switches.get_message_with_recipient!(message.id, recipient.id)
-      assert [%{content: "a little note for later"}] = message.attachments
-    end
-
-    test "reports an unparseable recipient instead of silently dropping it", %{
-      conn: conn,
-      switch: switch
-    } do
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
-
-      html =
-        lv
-        |> form("#message-form", %{
-          "message" => %{"subject" => "For you", "body" => "I love you all."},
-          "recipients" => "jamie@example.com\nnot-an-email"
-        })
-        |> render_submit()
-
-      assert html =~ "Check the recipients:"
-      assert Switches.list_messages(switch) == []
     end
   end
 end

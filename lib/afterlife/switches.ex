@@ -33,6 +33,7 @@ defmodule Afterlife.Switches do
     DeliveryLog,
     DeliveryWorker,
     Message,
+    MessageRecipient,
     Recipient,
     Switch
   }
@@ -99,7 +100,12 @@ defmodule Afterlife.Switches do
 
     from(m in Message, where: m.switch_id == ^switch.id, order_by: [asc: m.inserted_at])
     |> Repo.all()
-    |> Repo.preload([:recipients, attachments: attachment_metadata])
+    |> Repo.preload([
+      :recipients,
+      [message_recipients: :recipient],
+      attachments: attachment_metadata
+    ])
+    |> Enum.map(&Map.put(&1, :schedule, delivery_schedule(&1)))
   end
 
   def change_message(%Message{} = message, attrs \\ %{}) do
@@ -107,60 +113,54 @@ defmodule Afterlife.Switches do
   end
 
   @doc """
-  Creates a message on `switch` along with its recipients — `{name,
-  email}` tuples as produced by `parse_recipients/1` — in one
-  transaction, so a bad address can't leave behind a saved message that
-  is missing the person it was written for.
+  Creates a message on `switch`, addressed to the given recipient ids.
 
-  Returns `{:ok, message}` or `{:error, changeset}`, where the
-  changeset is the message's or the first offending recipient's.
+  Ids are filtered to the switch's own recipients, so a forged id from
+  another switch links nothing rather than leaking a message to a
+  stranger.
   """
-  def create_message(%Switch{} = switch, attrs, recipients \\ []) do
-    Repo.transact(fn ->
-      with {:ok, message} <-
-             %Message{}
-             |> Message.changeset(attrs)
-             |> Changeset.put_change(:switch_id, switch.id)
-             |> Repo.insert(),
-           :ok <- insert_recipients(message, recipients) do
-        {:ok, message}
-      end
-    end)
-  end
+  def create_message(%Switch{} = switch, attrs, schedules \\ []) do
+    owned = Repo.all(from r in Recipient, where: r.switch_id == ^switch.id, select: r.id)
 
-  defp insert_recipients(message, recipients) do
-    Enum.reduce_while(recipients, :ok, fn {name, email}, :ok ->
-      case add_recipient(message, name, email) do
-        {:ok, _recipient} -> {:cont, :ok}
-        {:error, changeset} -> {:halt, {:error, changeset}}
-      end
-    end)
-  end
+    links =
+      schedules
+      |> Enum.filter(&(&1.recipient_id in owned))
+      |> Enum.map(&MessageRecipient.changeset(%MessageRecipient{}, &1))
 
-  @doc """
-  Parses one recipient per line: `"Name <email@example.com>"` or bare
-  `"email@example.com"` (name defaults to the email's local part).
-  """
-  def parse_recipients(text) when is_binary(text) do
-    text
-    |> String.split(["\r\n", "\n"])
-    |> Enum.map(&String.trim/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.map(&parse_recipient/1)
-  end
-
-  defp parse_recipient(line) do
-    case Regex.run(~r/^(.*)<(.+)>$/, line) do
-      [_, name, email] -> {String.trim(name), String.trim(email)}
-      nil -> {hd(String.split(line, "@")), line}
-    end
-  end
-
-  def add_recipient(%Message{} = message, name, email) do
-    %Recipient{}
-    |> Recipient.changeset(%{name: name, email: email, message_id: message.id})
+    %Message{}
+    |> Message.changeset(attrs)
+    |> Changeset.put_change(:switch_id, switch.id)
+    |> Changeset.put_assoc(:message_recipients, links)
     |> Repo.insert()
   end
+
+  ## Recipients (people on a switch, reused across its messages)
+
+  def list_recipients(%Switch{} = switch) do
+    Repo.all(from r in Recipient, where: r.switch_id == ^switch.id, order_by: [asc: r.name])
+  end
+
+  def get_recipient!(%Switch{} = switch, id) do
+    Repo.get_by!(Recipient, id: id, switch_id: switch.id)
+  end
+
+  def change_recipient(%Recipient{} = recipient, attrs \\ %{}) do
+    Recipient.changeset(recipient, attrs)
+  end
+
+  def add_recipient(%Switch{} = switch, attrs) do
+    %Recipient{}
+    |> Recipient.changeset(Map.put(attrs, :switch_id, switch.id))
+    |> Repo.insert()
+  end
+
+  def update_recipient(%Recipient{} = recipient, attrs) do
+    recipient
+    |> Recipient.changeset(attrs)
+    |> Repo.update()
+  end
+
+  def delete_recipient(%Recipient{} = recipient), do: Repo.delete(recipient)
 
   def add_attachment(%Message{} = message, attrs) do
     %Attachment{}
@@ -384,23 +384,103 @@ defmodule Afterlife.Switches do
   transaction (see `transition/3`), where a failure must abort the
   status change too.
   """
-  def enqueue_delivery(%Switch{status: "triggered"} = switch) do
-    pairs =
+  def enqueue_delivery(%Switch{status: "triggered"} = switch, now \\ DateTime.utc_now(:second)) do
+    links =
       Repo.all(
-        from m in Message,
-          join: r in Recipient,
-          on: r.message_id == m.id,
+        from mr in MessageRecipient,
+          join: m in Message,
+          on: m.id == mr.message_id,
           where: m.switch_id == ^switch.id,
-          select: {m.id, r.id}
+          select: {mr.message_id, mr.recipient_id, mr.deliver_on}
       )
 
-    # Inserted one at a time rather than via `Oban.insert_all/1`, which
-    # doesn't enforce job uniqueness on the basic (non-Pro) engine.
-    Enum.each(pairs, fn {message_id, recipient_id} ->
-      %{message_id: message_id, recipient_id: recipient_id}
-      |> DeliveryWorker.new()
-      |> Oban.insert!()
+    for {message_id, recipient_id, deliver_on} <- links do
+      deliver_after = deliver_after(deliver_on, now)
+
+      {:ok, log} = get_or_create_delivery_log(message_id, recipient_id, deliver_after)
+
+      if is_nil(log.deliver_after), do: enqueue_delivery_job(message_id, recipient_id)
+    end
+
+    :ok
+  end
+
+  @doc """
+  When a scheduled copy becomes due, as a datetime — `nil` meaning "as
+  soon as the switch triggers".
+
+  A date already in the past resolves to nil rather than staying
+  pending: failing towards delivery is the safe direction, since a
+  letter arriving early is recoverable and one that never arrives is
+  not.
+  """
+  def deliver_after(deliver_on, now \\ DateTime.utc_now())
+
+  def deliver_after(nil, _now), do: nil
+
+  def deliver_after(%Date{} = deliver_on, now) do
+    due = DateTime.new!(deliver_on, ~T[09:00:00], "Etc/UTC")
+
+    if DateTime.after?(due, now), do: due, else: nil
+  end
+
+  @doc """
+  The date someone born on `birthdate` turns `age`.
+
+  An input-layer convenience for turning "when they turn 18" into the
+  date the delivery path actually stores. A 29 February birthdate has
+  no anniversary in most years, so it falls back to the 28th rather
+  than skipping three years in four.
+  """
+  def birthday_at_age(%Date{} = birthdate, age) when is_integer(age) and age >= 0 do
+    year = birthdate.year + age
+
+    case Date.new(year, birthdate.month, birthdate.day) do
+      {:ok, date} ->
+        date
+
+      {:error, _} ->
+        Date.new!(year, birthdate.month, Date.days_in_month(%{birthdate | year: year}))
+    end
+  end
+
+  @doc """
+  `{recipient, datetime_or_nil}` for each copy of `message`, for
+  display. nil means "as soon as the switch triggers".
+  """
+  def delivery_schedule(%Message{} = message, now \\ DateTime.utc_now()) do
+    message = Repo.preload(message, message_recipients: :recipient)
+
+    Enum.map(message.message_recipients, fn link ->
+      {link.recipient, deliver_after(link.deliver_on, now)}
     end)
+  end
+
+  @doc """
+  Deliveries whose scheduled date has arrived. Called by the sweep, so
+  a message held for a future birthday is picked up whenever the app is
+  next running — not by a queue entry that had to survive until then.
+  """
+  def enqueue_due_deliveries(now \\ DateTime.utc_now(:second)) do
+    due =
+      Repo.all(
+        from l in DeliveryLog,
+          where:
+            l.status == "pending" and not is_nil(l.deliver_after) and l.deliver_after <= ^now,
+          select: {l.message_id, l.recipient_id}
+      )
+
+    Enum.each(due, fn {message_id, recipient_id} ->
+      enqueue_delivery_job(message_id, recipient_id)
+    end)
+  end
+
+  # Inserted one at a time rather than via `Oban.insert_all/1`, which
+  # doesn't enforce job uniqueness on the basic (non-Pro) engine.
+  defp enqueue_delivery_job(message_id, recipient_id) do
+    %{message_id: message_id, recipient_id: recipient_id}
+    |> DeliveryWorker.new()
+    |> Oban.insert!()
   end
 
   @doc """
@@ -418,11 +498,15 @@ defmodule Afterlife.Switches do
   end
 
   @doc "Finds or creates the pending delivery_log row for a (message, recipient) pair."
-  def get_or_create_delivery_log(message_id, recipient_id) do
+  def get_or_create_delivery_log(message_id, recipient_id, deliver_after \\ nil) do
     case Repo.get_by(DeliveryLog, message_id: message_id, recipient_id: recipient_id) do
       nil ->
         %DeliveryLog{}
-        |> DeliveryLog.changeset(%{message_id: message_id, recipient_id: recipient_id})
+        |> DeliveryLog.changeset(%{
+          message_id: message_id,
+          recipient_id: recipient_id,
+          deliver_after: deliver_after
+        })
         |> Repo.insert()
 
       log ->

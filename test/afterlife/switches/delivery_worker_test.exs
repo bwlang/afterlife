@@ -17,8 +17,7 @@ defmodule Afterlife.Switches.DeliveryWorkerTest do
   describe "perform/1" do
     test "delivers the message, marks the delivery log sent" do
       switch = switch_fixture()
-      message = message_fixture(switch)
-      recipient = recipient_fixture(message)
+      {message, recipient} = message_with_recipient(switch)
       flush_mailbox()
 
       job = %Oban.Job{args: %{"message_id" => message.id, "recipient_id" => recipient.id}}
@@ -32,8 +31,7 @@ defmodule Afterlife.Switches.DeliveryWorkerTest do
 
     test "is safe to run twice for the same (message, recipient) pair" do
       switch = switch_fixture()
-      message = message_fixture(switch)
-      recipient = recipient_fixture(message)
+      {message, recipient} = message_with_recipient(switch)
 
       job = %Oban.Job{args: %{"message_id" => message.id, "recipient_id" => recipient.id}}
       assert :ok = DeliveryWorker.perform(job)
@@ -49,8 +47,7 @@ defmodule Afterlife.Switches.DeliveryWorkerTest do
 
     test "marks the delivery log failed when sending errors" do
       switch = switch_fixture()
-      message = message_fixture(switch)
-      recipient = recipient_fixture(message)
+      {message, recipient} = message_with_recipient(switch)
 
       original_config = Application.get_env(:afterlife, Afterlife.Mailer)
       Application.put_env(:afterlife, Afterlife.Mailer, adapter: FailingAdapter)
