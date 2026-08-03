@@ -25,7 +25,7 @@ defmodule AfterlifeWeb.RecipientLive.Index do
       </.header>
 
       <p :if={@recipients == []} class="text-base-content/70">
-        No recipients yet. Add them from a <.link navigate={~p"/switches"} class="link">switch</.link>.
+        No recipients yet. Add them from a <.link navigate={~p"/vigils"} class="link">vigil</.link>.
       </p>
 
       <div :for={recipient <- @recipients} class="border-b border-base-200 py-3">
@@ -46,8 +46,8 @@ defmodule AfterlifeWeb.RecipientLive.Index do
             </.link>
           </div>
           <p class="text-xs text-base-content/60 mt-1">
-            on switch
-            <.link navigate={~p"/switches/#{recipient.switch}"} class="link">
+            on vigil
+            <.link navigate={~p"/vigils/#{recipient.switch}"} class="link">
               {recipient.switch.name}
             </.link>
           </p>

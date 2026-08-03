@@ -22,13 +22,13 @@ defmodule Afterlife.Switches.Notifier do
 
     #{urgency_line}
 
-    Switch: #{switch.name}
+    Vigil: #{switch.name}
 
     If you're fine, click below to reset the timer:
 
     #{check_in_url}
 
-    If you don't recognize this switch, something's wrong — check your account.
+    If you don't recognize this vigil, something's wrong — check your account.
 
     ==============================
     """)

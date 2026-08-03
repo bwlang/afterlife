@@ -3,6 +3,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
   alias Afterlife.Switches
   alias Afterlife.Switches.{Recipient, Switch}
+  alias AfterlifeWeb.Labels
 
   @impl true
   def render(assigns) do
@@ -11,7 +12,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
       <.header>
         {@switch.name}
         <:subtitle>
-          Status: <span class={status_class(@switch.status)}>{@switch.status}</span>
+          Status: <span class={status_class(@switch.status)}>{Labels.status(@switch.status)}</span>
           · {due_summary(@switch)}
         </:subtitle>
         <:actions>
@@ -95,7 +96,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
       <div class="divider">Messages</div>
 
-      <.link navigate={~p"/switches/#{@switch}/messages/new"} class="btn btn-primary btn-sm">
+      <.link navigate={~p"/vigils/#{@switch}/messages/new"} class="btn btn-primary btn-sm">
         New message
       </.link>
 
@@ -103,7 +104,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
         <:item :for={message <- @messages} title={message.subject}>
           <.link
             :if={@switch.status != "triggered"}
-            navigate={~p"/switches/#{@switch}/messages/#{message}/edit"}
+            navigate={~p"/vigils/#{@switch}/messages/#{message}/edit"}
             class="link text-sm"
           >
             Edit
@@ -125,8 +126,8 @@ defmodule AfterlifeWeb.SwitchLive.Show do
         <:col :let={event} label="When">
           {Calendar.strftime(event.inserted_at, "%Y-%m-%d %H:%M UTC")}
         </:col>
-        <:col :let={event} label="Type">{event.type}</:col>
-        <:col :let={event} label="Channel">{event.channel}</:col>
+        <:col :let={event} label="What happened">{Labels.event(event.type)}</:col>
+        <:col :let={event} label="Via">{Labels.channel(event.channel)}</:col>
         <:col :let={event} label="From">
           <span class="font-mono text-xs">{event.ip_address || "—"}</span>
         </:col>
@@ -184,12 +185,12 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
   def handle_event("pause", _params, socket) do
     {:ok, switch} = Switches.pause_switch(socket.assigns.switch)
-    {:noreply, socket |> assign_switch(switch) |> put_flash(:info, "Switch paused.")}
+    {:noreply, socket |> assign_switch(switch) |> put_flash(:info, "Vigil paused.")}
   end
 
   def handle_event("resume", _params, socket) do
     {:ok, switch} = Switches.resume_switch(socket.assigns.switch)
-    {:noreply, socket |> assign_switch(switch) |> put_flash(:info, "Switch resumed.")}
+    {:noreply, socket |> assign_switch(switch) |> put_flash(:info, "Vigil resumed.")}
   end
 
   def handle_event("validate_settings", %{"switch" => switch_params}, socket) do
@@ -239,7 +240,7 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
   defp held?(message), do: Enum.any?(message.schedule, fn {_recipient, due} -> due end)
 
-  defp due_description(nil), do: "as soon as the switch triggers"
+  defp due_description(nil), do: "as soon as the vigil ends"
 
   defp due_description(due) do
     years = div(DateTime.diff(due, DateTime.utc_now(), :day), 365)

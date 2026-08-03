@@ -91,11 +91,11 @@ defmodule AfterlifeWeb.Router do
 
       live "/recipients", RecipientLive.Index, :index
 
-      live "/switches", SwitchLive.Index, :index
-      live "/switches/new", SwitchLive.Index, :new
-      live "/switches/:id", SwitchLive.Show, :show
-      live "/switches/:switch_id/messages/new", MessageLive.Form, :new
-      live "/switches/:switch_id/messages/:id/edit", MessageLive.Form, :edit
+      live "/vigils", SwitchLive.Index, :index
+      live "/vigils/new", SwitchLive.Index, :new
+      live "/vigils/:id", SwitchLive.Show, :show
+      live "/vigils/:switch_id/messages/new", MessageLive.Form, :new
+      live "/vigils/:switch_id/messages/:id/edit", MessageLive.Form, :edit
     end
 
     post "/users/update-password", UserSessionController, :update_password

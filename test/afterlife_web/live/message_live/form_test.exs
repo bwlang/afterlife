@@ -9,7 +9,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
 
   test "redirects if the user isn't logged in", %{conn: conn} do
     switch = switch_fixture()
-    assert {:error, redirect} = live(conn, ~p"/switches/#{switch}/messages/new")
+    assert {:error, redirect} = live(conn, ~p"/vigils/#{switch}/messages/new")
     assert {:redirect, %{to: path}} = redirect
     assert path == ~p"/users/log-in"
   end
@@ -32,7 +32,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       someone_elses = switch_fixture()
 
       assert_raise Ecto.NoResultsError, fn ->
-        live(conn, ~p"/switches/#{someone_elses}/messages/new")
+        live(conn, ~p"/vigils/#{someone_elses}/messages/new")
       end
     end
 
@@ -41,7 +41,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       alex = recipient_fixture(switch, %{name: "Alex", email: "alex@example.com"})
       _unpicked = recipient_fixture(switch, %{name: "Sam", email: "sam@example.com"})
 
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       {:ok, _lv, html} =
         lv
@@ -50,7 +50,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
           "recipient_ids" => [to_string(jamie.id), to_string(alex.id)]
         })
         |> render_submit()
-        |> follow_redirect(conn, ~p"/switches/#{switch}")
+        |> follow_redirect(conn, ~p"/vigils/#{switch}")
 
       assert html =~ "Message saved."
 
@@ -61,7 +61,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
 
     test "refuses to save without at least one recipient", %{conn: conn, switch: switch} do
       recipient_fixture(switch)
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       html =
         lv
@@ -78,7 +78,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
     # context ever sees an age or a birthday.
     test "an age is stored as the date that recipient reaches it", %{conn: conn, switch: switch} do
       jamie = recipient_fixture(switch, %{birthdate: ~D[2020-03-14]})
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       lv
       |> choose_mode("age")
@@ -99,7 +99,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       a = recipient_fixture(switch, %{name: "A"})
       b = recipient_fixture(switch, %{name: "B", birthdate: ~D[2020-03-14]})
 
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       lv
       |> choose_mode("date")
@@ -122,7 +122,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       baby = recipient_fixture(switch, %{name: "Robin", birthdate: ~D[2025-03-14]})
       teen = recipient_fixture(switch, %{name: "Jamie", birthdate: ~D[2013-03-14]})
 
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       html =
         lv
@@ -145,7 +145,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       grown = recipient_fixture(switch, %{name: "Alex", birthdate: ~D[1980-03-14]})
       unknown = recipient_fixture(switch, %{name: "Sam"})
 
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       html =
         lv
@@ -157,13 +157,13 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
         })
         |> render_change()
 
-      assert html =~ "Alex: as soon as the switch triggers"
+      assert html =~ "Alex: as soon as the vigil ends"
       assert html =~ "Sam: no birthday recorded"
     end
 
     test "attaches an uploaded file to the message", %{conn: conn, switch: switch} do
       jamie = recipient_fixture(switch)
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/new")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/new")
 
       attachment =
         file_input(lv, "#message-form", :attachments, [
@@ -195,7 +195,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
     test "loads the existing subject, body and recipients", %{conn: conn, switch: switch} do
       {message, recipient} = message_with_recipient(switch, %{subject: "Original"})
 
-      {:ok, _lv, html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+      {:ok, _lv, html} = live(conn, ~p"/vigils/#{switch}/messages/#{message}/edit")
 
       assert html =~ "Original"
       assert html =~ recipient.email
@@ -206,7 +206,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       {message, first} = message_with_recipient(switch, %{}, %{name: "First"})
       second = recipient_fixture(switch, %{name: "Second", email: "second@example.com"})
 
-      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+      {:ok, lv, _html} = live(conn, ~p"/vigils/#{switch}/messages/#{message}/edit")
 
       {:ok, _lv, html} =
         lv
@@ -215,7 +215,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
           "recipient_ids" => [to_string(second.id)]
         })
         |> render_submit()
-        |> follow_redirect(conn, ~p"/switches/#{switch}")
+        |> follow_redirect(conn, ~p"/vigils/#{switch}")
 
       assert html =~ "Message updated."
 
@@ -236,7 +236,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
           content: "abc"
         })
 
-      {:ok, lv, html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+      {:ok, lv, html} = live(conn, ~p"/vigils/#{switch}/messages/#{message}/edit")
       assert html =~ "old.txt"
 
       html = lv |> element("a", "remove") |> render_click()
@@ -255,8 +255,8 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
 
       {:ok, _lv, html} =
         conn
-        |> live(~p"/switches/#{triggered}/messages/#{message}/edit")
-        |> follow_redirect(conn, ~p"/switches/#{triggered}")
+        |> live(~p"/vigils/#{triggered}/messages/#{message}/edit")
+        |> follow_redirect(conn, ~p"/vigils/#{triggered}")
 
       assert html =~ "already triggered"
     end
@@ -278,7 +278,7 @@ defmodule AfterlifeWeb.MessageLive.FormTest do
       message_with_recipient(switch)
       triggered = Ecto.Changeset.change(switch, status: "triggered") |> Afterlife.Repo.update!()
 
-      {:ok, _lv, html} = live(conn, ~p"/switches/#{triggered}")
+      {:ok, _lv, html} = live(conn, ~p"/vigils/#{triggered}")
 
       refute html =~ "/edit"
     end

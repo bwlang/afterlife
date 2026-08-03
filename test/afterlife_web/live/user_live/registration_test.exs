@@ -17,7 +17,7 @@ defmodule AfterlifeWeb.UserLive.RegistrationTest do
         conn
         |> log_in_user(user_fixture())
         |> live(~p"/users/register")
-        |> follow_redirect(conn, ~p"/switches")
+        |> follow_redirect(conn, ~p"/vigils")
 
       assert {:ok, _conn} = result
     end

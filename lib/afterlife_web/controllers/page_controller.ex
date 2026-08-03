@@ -3,7 +3,7 @@ defmodule AfterlifeWeb.PageController do
 
   def home(conn, _params) do
     if conn.assigns[:current_scope] do
-      redirect(conn, to: ~p"/switches")
+      redirect(conn, to: ~p"/vigils")
     else
       render(conn, :home)
     end

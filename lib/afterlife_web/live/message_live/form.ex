@@ -20,7 +20,7 @@ defmodule AfterlifeWeb.MessageLive.Form do
           <label class="label mb-1">Recipients</label>
           <p :if={@recipients == []} class="text-sm text-base-content/70">
             No recipients on this switch yet — add them on the
-            <.link navigate={~p"/switches/#{@switch}"} class="link">switch page</.link>
+            <.link navigate={~p"/vigils/#{@switch}"} class="link">vigil page</.link>
             first.
           </p>
           <label :for={recipient <- @recipients} class="flex items-center gap-2 py-1">
@@ -111,7 +111,7 @@ defmodule AfterlifeWeb.MessageLive.Form do
           <.button variant="primary" phx-disable-with="Saving...">
             {if @live_action == :edit, do: "Save changes", else: "Save message"}
           </.button>
-          <.link navigate={~p"/switches/#{@switch}"} class="btn">Cancel</.link>
+          <.link navigate={~p"/vigils/#{@switch}"} class="btn">Cancel</.link>
         </div>
       </.form>
     </Layouts.app>
@@ -145,9 +145,9 @@ defmodule AfterlifeWeb.MessageLive.Form do
     socket
     |> put_flash(
       :error,
-      "This switch has already triggered — its messages can no longer be changed."
+      "This vigil has already triggered — its messages can no longer be changed."
     )
-    |> push_navigate(to: ~p"/switches/#{switch}")
+    |> push_navigate(to: ~p"/vigils/#{switch}")
     |> assign(message: nil, form: to_form(Switches.change_message(%Message{})))
     |> assign(selected_ids: [], schedule: %{mode: "trigger", date: nil, age: nil})
     |> assign(existing_attachments: [], horizons: [])
@@ -283,10 +283,10 @@ defmodule AfterlifeWeb.MessageLive.Form do
 
     case Switches.deliver_after(deliver_on_for(recipient, schedule), now) do
       nil when schedule.mode == "age" and is_nil(recipient.birthdate) ->
-        "no birthday recorded, so this copy goes as soon as the switch triggers"
+        "no birthday recorded, so this copy goes as soon as the vigil ends"
 
       nil ->
-        "as soon as the switch triggers"
+        "as soon as the vigil ends"
 
       due ->
         years = div(DateTime.diff(due, now, :day), 365)
@@ -310,16 +310,16 @@ defmodule AfterlifeWeb.MessageLive.Form do
         {:noreply,
          socket
          |> put_flash(:info, "Message updated.")
-         |> push_navigate(to: ~p"/switches/#{switch}")}
+         |> push_navigate(to: ~p"/vigils/#{switch}")}
 
       {:error, :already_triggered} ->
         {:noreply,
          socket
          |> put_flash(
            :error,
-           "This switch has already triggered — its messages can no longer be changed."
+           "This vigil has already triggered — its messages can no longer be changed."
          )
-         |> push_navigate(to: ~p"/switches/#{switch}")}
+         |> push_navigate(to: ~p"/vigils/#{switch}")}
 
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset))}
@@ -336,7 +336,7 @@ defmodule AfterlifeWeb.MessageLive.Form do
         {:noreply,
          socket
          |> put_flash(:info, "Message saved.")
-         |> push_navigate(to: ~p"/switches/#{switch}")}
+         |> push_navigate(to: ~p"/vigils/#{switch}")}
 
       {:error, changeset} ->
         {:noreply, assign(socket, form: to_form(changeset))}

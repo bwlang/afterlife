@@ -11,6 +11,6 @@ defmodule AfterlifeWeb.PageControllerTest do
 
   test "GET / redirects a logged-in user straight to their switches", %{conn: conn} do
     conn = conn |> log_in_user(user_fixture()) |> get(~p"/")
-    assert redirected_to(conn) == ~p"/switches"
+    assert redirected_to(conn) == ~p"/vigils"
   end
 end
