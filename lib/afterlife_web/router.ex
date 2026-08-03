@@ -92,7 +92,8 @@ defmodule AfterlifeWeb.Router do
       live "/switches", SwitchLive.Index, :index
       live "/switches/new", SwitchLive.Index, :new
       live "/switches/:id", SwitchLive.Show, :show
-      live "/switches/:switch_id/messages/new", MessageLive.New, :new
+      live "/switches/:switch_id/messages/new", MessageLive.Form, :new
+      live "/switches/:switch_id/messages/:id/edit", MessageLive.Form, :edit
     end
 
     post "/users/update-password", UserSessionController, :update_password

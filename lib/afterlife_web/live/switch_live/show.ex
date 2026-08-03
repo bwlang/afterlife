@@ -101,7 +101,14 @@ defmodule AfterlifeWeb.SwitchLive.Show do
 
       <.list :if={@messages != []}>
         <:item :for={message <- @messages} title={message.subject}>
-          To: {Enum.map_join(message.recipients, ", ", & &1.email)}
+          <.link
+            :if={@switch.status != "triggered"}
+            navigate={~p"/switches/#{@switch}/messages/#{message}/edit"}
+            class="link text-sm"
+          >
+            Edit
+          </.link>
+          <br /> To: {Enum.map_join(message.recipients, ", ", & &1.email)}
           <div :if={held?(message)} class="text-xs text-base-content/70 mt-1">
             <div :for={{recipient, due} <- message.schedule}>
               {recipient.name}: {due_description(due)}

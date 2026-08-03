@@ -1,4 +1,4 @@
-defmodule AfterlifeWeb.MessageLive.NewTest do
+defmodule AfterlifeWeb.MessageLive.FormTest do
   use AfterlifeWeb.ConnCase
 
   import Phoenix.LiveViewTest
@@ -182,6 +182,105 @@ defmodule AfterlifeWeb.MessageLive.NewTest do
       assert [message] = Switches.list_messages(switch)
       assert [attachment] = message.attachments
       assert attachment.filename == "note.txt"
+    end
+  end
+
+  describe "editing a message" do
+    setup %{conn: conn} do
+      user = user_fixture()
+      switch = switch_fixture(%{user: user})
+      %{conn: log_in_user(conn, user), switch: switch}
+    end
+
+    test "loads the existing subject, body and recipients", %{conn: conn, switch: switch} do
+      {message, recipient} = message_with_recipient(switch, %{subject: "Original"})
+
+      {:ok, _lv, html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+
+      assert html =~ "Original"
+      assert html =~ recipient.email
+      assert html =~ "Save changes"
+    end
+
+    test "rewrites the subject, body and recipient list", %{conn: conn, switch: switch} do
+      {message, first} = message_with_recipient(switch, %{}, %{name: "First"})
+      second = recipient_fixture(switch, %{name: "Second", email: "second@example.com"})
+
+      {:ok, lv, _html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+
+      {:ok, _lv, html} =
+        lv
+        |> form("#message-form", %{
+          "message" => %{"subject" => "Rewritten", "body" => "New words."},
+          "recipient_ids" => [to_string(second.id)]
+        })
+        |> render_submit()
+        |> follow_redirect(conn, ~p"/switches/#{switch}")
+
+      assert html =~ "Message updated."
+
+      assert [updated] = Switches.list_messages(switch)
+      assert updated.subject == "Rewritten"
+      assert Enum.map(updated.recipients, & &1.id) == [second.id]
+      refute first.id in Enum.map(updated.recipients, & &1.id)
+    end
+
+    test "removes an attachment", %{conn: conn, switch: switch} do
+      {message, _recipient} = message_with_recipient(switch)
+
+      {:ok, _attachment} =
+        Switches.add_attachment(message, %{
+          filename: "old.txt",
+          content_type: "text/plain",
+          byte_size: 3,
+          content: "abc"
+        })
+
+      {:ok, lv, html} = live(conn, ~p"/switches/#{switch}/messages/#{message}/edit")
+      assert html =~ "old.txt"
+
+      html = lv |> element("a", "remove") |> render_click()
+      refute html =~ "old.txt"
+
+      assert [reloaded] = Switches.list_messages(switch)
+      assert reloaded.attachments == []
+    end
+
+    # Once a switch fires, delivery rows exist and some copies are
+    # already gone. Editing then would leave recipients holding
+    # different versions of the same letter.
+    test "is refused once the switch has triggered", %{conn: conn, switch: switch} do
+      {message, _recipient} = message_with_recipient(switch)
+      triggered = Ecto.Changeset.change(switch, status: "triggered") |> Afterlife.Repo.update!()
+
+      {:ok, _lv, html} =
+        conn
+        |> live(~p"/switches/#{triggered}/messages/#{message}/edit")
+        |> follow_redirect(conn, ~p"/switches/#{triggered}")
+
+      assert html =~ "already triggered"
+    end
+
+    test "the context refuses it too, not just the page", %{switch: switch} do
+      {message, recipient} = message_with_recipient(switch)
+      triggered = Ecto.Changeset.change(switch, status: "triggered") |> Afterlife.Repo.update!()
+
+      assert {:error, :already_triggered} =
+               Switches.update_message(triggered, message, %{subject: "nope"}, [
+                 %{recipient_id: recipient.id, deliver_on: nil}
+               ])
+
+      assert [unchanged] = Switches.list_messages(switch)
+      assert unchanged.subject == "For you"
+    end
+
+    test "no edit link is offered once triggered", %{conn: conn, switch: switch} do
+      message_with_recipient(switch)
+      triggered = Ecto.Changeset.change(switch, status: "triggered") |> Afterlife.Repo.update!()
+
+      {:ok, _lv, html} = live(conn, ~p"/switches/#{triggered}")
+
+      refute html =~ "/edit"
     end
   end
 end

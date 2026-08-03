@@ -1,4 +1,4 @@
-defmodule AfterlifeWeb.MessageLive.New do
+defmodule AfterlifeWeb.MessageLive.Form do
   use AfterlifeWeb, :live_view
 
   alias Afterlife.Switches
@@ -9,7 +9,7 @@ defmodule AfterlifeWeb.MessageLive.New do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <.header>
-        New message for "{@switch.name}"
+        {if @live_action == :edit, do: "Editing a message for", else: "New message for"} "{@switch.name}"
       </.header>
 
       <.form for={@form} id="message-form" phx-submit="save" phx-change="validate" class="space-y-2">
@@ -84,6 +84,17 @@ defmodule AfterlifeWeb.MessageLive.New do
 
         <div>
           <label class="label mb-1">Attachments</label>
+          <div :for={attachment <- @existing_attachments} class="text-sm">
+            {attachment.filename} ({attachment.byte_size} bytes)
+            <.link
+              phx-click="delete_attachment"
+              phx-value-id={attachment.id}
+              data-confirm="Remove this attachment?"
+              class="link text-error"
+            >
+              remove
+            </.link>
+          </div>
           <.live_file_input upload={@uploads.attachments} />
           <div :for={entry <- @uploads.attachments.entries} class="text-sm mt-1">
             {entry.client_name} ({entry.client_size} bytes)
@@ -97,7 +108,9 @@ defmodule AfterlifeWeb.MessageLive.New do
         </div>
 
         <div class="flex gap-2 pt-2">
-          <.button variant="primary" phx-disable-with="Saving...">Save message</.button>
+          <.button variant="primary" phx-disable-with="Saving...">
+            {if @live_action == :edit, do: "Save changes", else: "Save message"}
+          </.button>
           <.link navigate={~p"/switches/#{@switch}"} class="btn">Cancel</.link>
         </div>
       </.form>
@@ -106,18 +119,67 @@ defmodule AfterlifeWeb.MessageLive.New do
   end
 
   @impl true
-  def mount(%{"switch_id" => switch_id}, _session, socket) do
+  def mount(%{"switch_id" => switch_id} = params, _session, socket) do
     switch = Switches.get_switch!(socket.assigns.current_scope.user, switch_id)
 
-    {:ok,
-     socket
-     |> assign(:switch, switch)
-     |> assign(:form, to_form(Switches.change_message(%Message{})))
-     |> assign(:recipients, Switches.list_recipients(switch))
-     |> assign(:selected_ids, [])
-     |> assign(:schedule, %{mode: "trigger", date: nil, age: nil})
-     |> assign(:horizons, [])
-     |> allow_upload(:attachments, accept: :any, max_entries: 5, max_file_size: 25_000_000)}
+    socket =
+      socket
+      |> assign(:switch, switch)
+      |> assign(:recipients, Switches.list_recipients(switch))
+      |> allow_upload(:attachments, accept: :any, max_entries: 5, max_file_size: 25_000_000)
+
+    {:ok, apply_action(socket, socket.assigns.live_action, switch, params)}
+  end
+
+  defp apply_action(socket, :new, _switch, _params) do
+    socket
+    |> assign(:message, nil)
+    |> assign(:form, to_form(Switches.change_message(%Message{})))
+    |> assign(:selected_ids, [])
+    |> assign(:schedule, %{mode: "trigger", date: nil, age: nil})
+    |> assign(:existing_attachments, [])
+    |> assign(:horizons, [])
+  end
+
+  defp apply_action(socket, :edit, %{status: "triggered"} = switch, _params) do
+    socket
+    |> put_flash(
+      :error,
+      "This switch has already triggered — its messages can no longer be changed."
+    )
+    |> push_navigate(to: ~p"/switches/#{switch}")
+    |> assign(message: nil, form: to_form(Switches.change_message(%Message{})))
+    |> assign(selected_ids: [], schedule: %{mode: "trigger", date: nil, age: nil})
+    |> assign(existing_attachments: [], horizons: [])
+  end
+
+  defp apply_action(socket, :edit, switch, %{"id" => id}) do
+    message = Switches.get_message!(switch, id)
+    schedule = schedule_of(message)
+
+    socket
+    |> assign(:message, message)
+    |> assign(:form, to_form(Switches.change_message(message)))
+    |> assign(:selected_ids, Enum.map(message.message_recipients, & &1.recipient_id))
+    |> assign(:schedule, schedule)
+    |> assign(:existing_attachments, message.attachments)
+    |> assign(
+      :horizons,
+      horizons(
+        socket.assigns.recipients,
+        Enum.map(message.message_recipients, & &1.recipient_id),
+        schedule
+      )
+    )
+  end
+
+  # Stored dates come back as a fixed date: the age that produced them
+  # isn't kept, because the delivery path doesn't deal in ages.
+  defp schedule_of(message) do
+    case Enum.find(message.message_recipients, & &1.deliver_on) do
+      nil -> %{mode: "trigger", date: nil, age: nil}
+      link -> %{mode: "date", date: Date.to_iso8601(link.deliver_on), age: nil}
+    end
   end
 
   @impl true
@@ -139,6 +201,22 @@ defmodule AfterlifeWeb.MessageLive.New do
 
   def handle_event("cancel_upload", %{"ref" => ref}, socket) do
     {:noreply, cancel_upload(socket, :attachments, ref)}
+  end
+
+  def handle_event("delete_attachment", %{"id" => id}, socket) do
+    message = socket.assigns.message
+
+    message
+    |> Switches.get_attachment!(id)
+    |> Switches.delete_attachment()
+
+    message = Switches.get_message!(socket.assigns.switch, message.id)
+
+    {:noreply,
+     socket
+     |> assign(:message, message)
+     |> assign(:existing_attachments, message.attachments)
+     |> put_flash(:info, "Attachment removed.")}
   end
 
   def handle_event("save", params, socket) do
@@ -220,6 +298,32 @@ defmodule AfterlifeWeb.MessageLive.New do
     params
     |> Map.get("recipient_ids", [])
     |> Enum.map(&String.to_integer/1)
+  end
+
+  defp save_message(%{assigns: %{message: %Message{} = message}} = socket, attrs, schedules) do
+    switch = socket.assigns.switch
+
+    case Switches.update_message(switch, message, attrs, schedules) do
+      {:ok, updated} ->
+        consume_attachments(socket, updated)
+
+        {:noreply,
+         socket
+         |> put_flash(:info, "Message updated.")
+         |> push_navigate(to: ~p"/switches/#{switch}")}
+
+      {:error, :already_triggered} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :error,
+           "This switch has already triggered — its messages can no longer be changed."
+         )
+         |> push_navigate(to: ~p"/switches/#{switch}")}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, form: to_form(changeset))}
+    end
   end
 
   defp save_message(socket, message_params, recipient_ids) do

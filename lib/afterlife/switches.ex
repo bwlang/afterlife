@@ -94,18 +94,25 @@ defmodule Afterlife.Switches do
   (`get_message_with_recipient!/2`) ever needs them.
   """
   def list_messages(%Switch{} = switch) do
+    from(m in Message, where: m.switch_id == ^switch.id, order_by: [asc: m.inserted_at])
+    |> Repo.all()
+    |> Repo.preload(message_preloads())
+    |> Enum.map(&Map.put(&1, :schedule, delivery_schedule(&1)))
+  end
+
+  @doc "One of `switch`'s messages, with recipients and attachment metadata."
+  def get_message!(%Switch{} = switch, id) do
+    Message
+    |> Repo.get_by!(id: id, switch_id: switch.id)
+    |> Repo.preload(message_preloads())
+  end
+
+  defp message_preloads do
     attachment_metadata =
       from a in Attachment,
         select: struct(a, [:id, :message_id, :filename, :content_type, :byte_size, :inserted_at])
 
-    from(m in Message, where: m.switch_id == ^switch.id, order_by: [asc: m.inserted_at])
-    |> Repo.all()
-    |> Repo.preload([
-      :recipients,
-      [message_recipients: :recipient],
-      attachments: attachment_metadata
-    ])
-    |> Enum.map(&Map.put(&1, :schedule, delivery_schedule(&1)))
+    [:recipients, [message_recipients: :recipient], attachments: attachment_metadata]
   end
 
   def change_message(%Message{} = message, attrs \\ %{}) do
@@ -120,18 +127,47 @@ defmodule Afterlife.Switches do
   stranger.
   """
   def create_message(%Switch{} = switch, attrs, schedules \\ []) do
-    owned = Repo.all(from r in Recipient, where: r.switch_id == ^switch.id, select: r.id)
-
-    links =
-      schedules
-      |> Enum.filter(&(&1.recipient_id in owned))
-      |> Enum.map(&MessageRecipient.changeset(%MessageRecipient{}, &1))
-
     %Message{}
     |> Message.changeset(attrs)
     |> Changeset.put_change(:switch_id, switch.id)
-    |> Changeset.put_assoc(:message_recipients, links)
+    |> Changeset.put_assoc(:message_recipients, links_for(switch, schedules))
     |> Repo.insert()
+  end
+
+  @doc """
+  Rewrites a message and who it goes to.
+
+  Refused once the switch has triggered: delivery rows exist from that
+  moment, some already sent, so an edit would leave one recipient with
+  the letter you wrote and another with the one you replaced it with —
+  and you would not be around to notice.
+  """
+  def update_message(%Switch{status: "triggered"}, %Message{}, _attrs, _schedules),
+    do: {:error, :already_triggered}
+
+  def update_message(%Switch{} = switch, %Message{} = message, attrs, schedules) do
+    message
+    |> Repo.preload(:message_recipients)
+    |> Message.changeset(attrs)
+    |> Changeset.put_assoc(:message_recipients, links_for(switch, schedules))
+    |> Repo.update()
+  end
+
+  def delete_attachment(%Attachment{} = attachment), do: Repo.delete(attachment)
+
+  def get_attachment!(%Message{} = message, id) do
+    Repo.get_by!(Attachment, id: id, message_id: message.id)
+  end
+
+  # Ids are filtered to the switch's own people, so a forged id from
+  # another switch links nothing rather than leaking a message to a
+  # stranger.
+  defp links_for(%Switch{} = switch, schedules) do
+    owned = Repo.all(from r in Recipient, where: r.switch_id == ^switch.id, select: r.id)
+
+    schedules
+    |> Enum.filter(&(&1.recipient_id in owned))
+    |> Enum.map(&MessageRecipient.changeset(%MessageRecipient{}, &1))
   end
 
   ## Recipients (people on a switch, reused across its messages)
