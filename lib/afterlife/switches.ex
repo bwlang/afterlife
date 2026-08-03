@@ -172,6 +172,32 @@ defmodule Afterlife.Switches do
 
   ## Recipients (people on a switch, reused across its messages)
 
+  @doc """
+  Every person across all of `user`'s switches, with the switch they
+  belong to. Scoped through the switch, so one account can never reach
+  another's people.
+  """
+  def list_all_recipients(%User{} = user) do
+    Repo.all(
+      from r in Recipient,
+        join: s in Switch,
+        on: s.id == r.switch_id,
+        where: s.user_id == ^user.id,
+        order_by: [asc: s.name, asc: r.name],
+        preload: [switch: s]
+    )
+  end
+
+  def get_user_recipient!(%User{} = user, id) do
+    Repo.one!(
+      from r in Recipient,
+        join: s in Switch,
+        on: s.id == r.switch_id,
+        where: s.user_id == ^user.id and r.id == ^id,
+        preload: [switch: s]
+    )
+  end
+
   def list_recipients(%Switch{} = switch) do
     Repo.all(from r in Recipient, where: r.switch_id == ^switch.id, order_by: [asc: r.name])
   end
